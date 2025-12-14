@@ -1,0 +1,648 @@
+import React, { useState, useEffect } from 'react';
+import { Home, Plus, Trash2, Users, Download, AlertCircle } from 'lucide-react';
+
+const FLOORS = {
+  'First Floor': [
+    'Front Hallway', 'Dining Room', 'Kitchen', 'Dining Nook', 
+    'Family Room', 'Living Room', 'Stairs', 'Half Bathroom', 'Laundry Room'
+  ],
+  'Second Floor': [
+    'Upstairs Hallway', 'Master Bedroom', 'Master Bathroom', 
+    'Guest Bathroom', 'Bedroom 1', 'Bedroom 2', 'Bedroom 3', 
+    'Attic Above Garage'
+  ],
+  'Third Floor': [
+    'Left Room', 'Right Room', 'Stairs', 'Access Areas'
+  ],
+  'Other Spaces': [
+    'Garage', 'Utility Room', 'Driveway', 'Covered Porch', 
+    'Back Deck', 'Front Yard', 'Backyard', 'Crawl Space',
+    'Front of House', 'Back of House', 'Left Side of House', 'Right Side of House'
+  ]
+};
+
+export default function HouseInspection() {
+  const [userName, setUserName] = useState('');
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [view, setView] = useState('floors'); // 'floors', 'rooms', 'add', 'report'
+  const [selectedFloor, setSelectedFloor] = useState('');
+  const [selectedRoom, setSelectedRoom] = useState('');
+  const [newIssue, setNewIssue] = useState('');
+  const [findings, setFindings] = useState([]);
+  const [groupedIssues, setGroupedIssues] = useState(new Set());
+  const [showExportMenu, setShowExportMenu] = useState(false);
+
+  // Load data from storage on mount
+  useEffect(() => {
+    loadFindings();
+  }, []);
+
+  // Save findings whenever they change
+  useEffect(() => {
+    if (findings.length > 0) {
+      saveFindings();
+    }
+  }, [findings]);
+
+  const loadFindings = async () => {
+    try {
+      const result = await window.storage.get('house-findings');
+      if (result && result.value) {
+        setFindings(JSON.parse(result.value));
+      }
+    } catch (error) {
+      console.log('No existing findings found');
+    }
+  };
+
+  const saveFindings = async () => {
+    try {
+      await window.storage.set('house-findings', JSON.stringify(findings));
+    } catch (error) {
+      console.error('Error saving findings:', error);
+    }
+  };
+
+  const handleLogin = () => {
+    if (userName.trim()) {
+      setIsLoggedIn(true);
+      setView('floors');
+    }
+  };
+
+  const addFinding = () => {
+    if (newIssue.trim()) {
+      const finding = {
+        id: Date.now() + Math.random(),
+        room: selectedRoom,
+        floor: selectedFloor,
+        issue: newIssue.trim(),
+        addedBy: userName,
+        timestamp: new Date().toISOString(),
+        grouped: false
+      };
+      setFindings([...findings, finding]);
+      setNewIssue('');
+      setView('floors');
+      setSelectedFloor('');
+      setSelectedRoom('');
+    }
+  };
+
+  const deleteFinding = (id) => {
+    setFindings(findings.filter(f => f.id !== id));
+  };
+
+  const toggleGroup = (id) => {
+    const newGrouped = new Set(groupedIssues);
+    if (newGrouped.has(id)) {
+      newGrouped.delete(id);
+    } else {
+      newGrouped.add(id);
+    }
+    setGroupedIssues(newGrouped);
+  };
+
+  const mergeGrouped = () => {
+    if (groupedIssues.size < 2) return;
+    
+    const grouped = Array.from(groupedIssues);
+    const firstFinding = findings.find(f => f.id === grouped[0]);
+    
+    if (!firstFinding) return;
+
+    const contributors = findings
+      .filter(f => grouped.includes(f.id))
+      .map(f => f.addedBy)
+      .filter((v, i, a) => a.indexOf(v) === i)
+      .join(', ');
+
+    const mergedFinding = {
+      ...firstFinding,
+      addedBy: contributors,
+      merged: true
+    };
+
+    setFindings([
+      ...findings.filter(f => !grouped.includes(f.id)),
+      mergedFinding
+    ]);
+    setGroupedIssues(new Set());
+  };
+
+  const generateReportData = () => {
+    const reportByRoom = {};
+    
+    Object.keys(FLOORS).forEach(floor => {
+      FLOORS[floor].forEach(room => {
+        const roomFindings = findings.filter(f => f.room === room);
+        if (roomFindings.length > 0) {
+          reportByRoom[`${floor} - ${room}`] = roomFindings;
+        }
+      });
+    });
+
+    return reportByRoom;
+  };
+
+  const exportAsTxt = () => {
+    const reportByRoom = generateReportData();
+
+    let report = 'HOUSE INSPECTION REPORT\n';
+    report += '='.repeat(50) + '\n';
+    report += `Generated: ${new Date().toLocaleString()}\n`;
+    report += `Total Issues: ${findings.length}\n\n`;
+
+    Object.keys(reportByRoom).forEach(location => {
+      report += `\n${location}\n`;
+      report += '-'.repeat(50) + '\n';
+      reportByRoom[location].forEach((f, idx) => {
+        report += `${idx + 1}. ${f.issue}\n`;
+        report += `   Reported by: ${f.addedBy}\n`;
+        report += `   Time: ${new Date(f.timestamp).toLocaleString()}\n\n`;
+      });
+    });
+
+    const blob = new Blob([report], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `house-inspection-${new Date().toISOString().split('T')[0]}.txt`;
+    a.click();
+  };
+
+  const exportAsPdf = () => {
+    const reportByRoom = generateReportData();
+    
+    // Create HTML content for PDF
+    let htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: Arial, sans-serif; margin: 40px; }
+          h1 { color: #4F46E5; border-bottom: 3px solid #4F46E5; padding-bottom: 10px; }
+          .metadata { color: #666; margin-bottom: 30px; }
+          .location { margin-top: 30px; }
+          .location-title { 
+            background-color: #4F46E5; 
+            color: white; 
+            padding: 10px; 
+            font-size: 18px; 
+            font-weight: bold;
+          }
+          .issue { 
+            margin: 15px 0; 
+            padding: 15px; 
+            background-color: #f9fafb; 
+            border-left: 4px solid #FCD34D;
+          }
+          .issue-text { font-weight: bold; margin-bottom: 5px; }
+          .issue-meta { color: #666; font-size: 14px; }
+        </style>
+      </head>
+      <body>
+        <h1>House Inspection Report</h1>
+        <div class="metadata">
+          <p><strong>Generated:</strong> ${new Date().toLocaleString()}</p>
+          <p><strong>Total Issues:</strong> ${findings.length}</p>
+        </div>
+    `;
+
+    Object.keys(reportByRoom).forEach(location => {
+      htmlContent += `<div class="location">`;
+      htmlContent += `<div class="location-title">${location}</div>`;
+      reportByRoom[location].forEach((f, idx) => {
+        htmlContent += `
+          <div class="issue">
+            <div class="issue-text">${idx + 1}. ${f.issue}</div>
+            <div class="issue-meta">
+              Reported by: ${f.addedBy} | 
+              ${new Date(f.timestamp).toLocaleString()}
+            </div>
+          </div>
+        `;
+      });
+      htmlContent += `</div>`;
+    });
+
+    htmlContent += `</body></html>`;
+
+    // Create blob and download
+    const blob = new Blob([htmlContent], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `house-inspection-${new Date().toISOString().split('T')[0]}.html`;
+    a.click();
+    
+    // Note: The HTML file can be opened and printed as PDF using browser's Print to PDF function
+    alert('HTML file downloaded. Open it in your browser and use Print → Save as PDF to create a PDF.');
+  };
+
+  const exportAsDocx = async () => {
+    const reportByRoom = generateReportData();
+
+    // Create HTML that Word can import
+    let htmlContent = `
+      <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word'>
+      <head><meta charset='utf-8'></head>
+      <body>
+        <h1 style="color: #4F46E5; border-bottom: 3px solid #4F46E5; padding-bottom: 10px;">House Inspection Report</h1>
+        <p><strong>Generated:</strong> ${new Date().toLocaleString()}</p>
+        <p><strong>Total Issues:</strong> ${findings.length}</p>
+        <br>
+    `;
+
+    Object.keys(reportByRoom).forEach(location => {
+      htmlContent += `<h2 style="background-color: #4F46E5; color: white; padding: 10px;">${location}</h2>`;
+      reportByRoom[location].forEach((f, idx) => {
+        htmlContent += `
+          <div style="margin: 15px 0; padding: 15px; background-color: #f9fafb; border-left: 4px solid #FCD34D;">
+            <p style="font-weight: bold; margin: 0 0 5px 0;">${idx + 1}. ${f.issue}</p>
+            <p style="color: #666; font-size: 14px; margin: 0;">
+              Reported by: ${f.addedBy} | ${new Date(f.timestamp).toLocaleString()}
+            </p>
+          </div>
+        `;
+      });
+    });
+
+    htmlContent += `</body></html>`;
+
+    // Create blob with proper MIME type for Word
+    const blob = new Blob([htmlContent], { 
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' 
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `house-inspection-${new Date().toISOString().split('T')[0]}.doc`;
+    a.click();
+  };
+
+  const clearAllData = async () => {
+    if (confirm('Are you sure you want to clear all inspection data? This cannot be undone.')) {
+      setFindings([]);
+      try {
+        await window.storage.delete('house-findings');
+      } catch (error) {
+        console.error('Error clearing data:', error);
+      }
+      setGroupedIssues(new Set());
+    }
+  };
+
+  // Login Screen
+  if (!isLoggedIn) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full">
+          <div className="flex justify-center mb-6">
+            <Home className="w-16 h-16 text-indigo-600" />
+          </div>
+          <h1 className="text-3xl font-bold text-gray-800 text-center mb-2">
+            House Inspection
+          </h1>
+          <p className="text-gray-600 text-center mb-8">
+            Collaborative walk-through tool
+          </p>
+          <input
+            type="text"
+            placeholder="Enter your name"
+            value={userName}
+            onChange={(e) => setUserName(e.target.value)}
+            onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
+            className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-4 focus:border-indigo-500 focus:outline-none"
+          />
+          <button
+            onClick={handleLogin}
+            className="w-full bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition"
+          >
+            Start Inspection
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Floor Selection View
+  if (view === 'floors') {
+    return (
+      <div className="min-h-screen bg-gray-50 p-4">
+        <div className="max-w-2xl mx-auto">
+          <div className="bg-white rounded-lg shadow-md p-4 mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Users className="w-5 h-5 text-indigo-600" />
+              <span className="font-semibold text-gray-700">{userName}</span>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setView('report')}
+                className="text-indigo-600 hover:text-indigo-700 font-medium text-sm"
+              >
+                View Report ({findings.length})
+              </button>
+            </div>
+          </div>
+
+          <h2 className="text-2xl font-bold text-gray-800 mb-4">Select Floor</h2>
+          
+          <div className="space-y-3">
+            {Object.keys(FLOORS).map(floor => {
+              const floorFindings = findings.filter(f => f.floor === floor);
+              return (
+                <button
+                  key={floor}
+                  onClick={() => {
+                    setSelectedFloor(floor);
+                    setView('rooms');
+                  }}
+                  className="w-full bg-white rounded-lg shadow-md p-4 text-left hover:shadow-lg transition border-l-4 border-indigo-600"
+                >
+                  <div className="flex justify-between items-center">
+                    <span className="text-lg font-semibold text-gray-800">{floor}</span>
+                    {floorFindings.length > 0 && (
+                      <span className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-sm font-medium">
+                        {floorFindings.length} issue{floorFindings.length !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Room Selection View
+  if (view === 'rooms') {
+    return (
+      <div className="min-h-screen bg-gray-50 p-4">
+        <div className="max-w-2xl mx-auto">
+          <button
+            onClick={() => setView('floors')}
+            className="text-indigo-600 hover:text-indigo-700 font-medium mb-4"
+          >
+            ← Back to Floors
+          </button>
+
+          <h2 className="text-2xl font-bold text-gray-800 mb-4">{selectedFloor}</h2>
+          
+          <div className="space-y-3">
+            {FLOORS[selectedFloor].map(room => {
+              const roomFindings = findings.filter(f => f.room === room);
+              return (
+                <button
+                  key={room}
+                  onClick={() => {
+                    setSelectedRoom(room);
+                    setView('add');
+                  }}
+                  className="w-full bg-white rounded-lg shadow-md p-4 text-left hover:shadow-lg transition"
+                >
+                  <div className="flex justify-between items-center">
+                    <span className="text-lg font-medium text-gray-800">{room}</span>
+                    {roomFindings.length > 0 && (
+                      <span className="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-sm font-medium">
+                        {roomFindings.length} issue{roomFindings.length !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Add Issue View
+  if (view === 'add') {
+    return (
+      <div className="min-h-screen bg-gray-50 p-4">
+        <div className="max-w-2xl mx-auto">
+          <button
+            onClick={() => setView('rooms')}
+            className="text-indigo-600 hover:text-indigo-700 font-medium mb-4"
+          >
+            ← Back to Rooms
+          </button>
+
+          <div className="bg-white rounded-lg shadow-md p-6 mb-4">
+            <h3 className="text-sm font-medium text-gray-600 mb-1">Location</h3>
+            <p className="text-xl font-bold text-gray-800">{selectedFloor} - {selectedRoom}</p>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Describe the issue
+            </label>
+            <textarea
+              value={newIssue}
+              onChange={(e) => setNewIssue(e.target.value)}
+              placeholder="e.g., Nail holes in wall near door, Carpet stain near window, Install ventilation hood..."
+              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-4 focus:border-indigo-500 focus:outline-none min-h-32"
+            />
+            <div className="flex gap-3">
+              <button
+                onClick={addFinding}
+                disabled={!newIssue.trim()}
+                className="flex-1 bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                <Plus className="w-5 h-5" />
+                Add Issue
+              </button>
+              <button
+                onClick={() => {
+                  setNewIssue('');
+                  setView('rooms');
+                }}
+                className="px-6 py-3 border-2 border-gray-300 rounded-lg font-semibold hover:bg-gray-50 transition"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+
+          {/* Show existing issues for this room */}
+          {findings.filter(f => f.room === selectedRoom).length > 0 && (
+            <div className="mt-6 bg-white rounded-lg shadow-md p-6">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">
+                Existing Issues in {selectedRoom}
+              </h3>
+              <div className="space-y-3">
+                {findings.filter(f => f.room === selectedRoom).map(finding => (
+                  <div key={finding.id} className="border-l-4 border-amber-500 bg-amber-50 p-3 rounded">
+                    <p className="text-gray-800">{finding.issue}</p>
+                    <p className="text-sm text-gray-600 mt-1">By {finding.addedBy}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Report View
+  if (view === 'report') {
+    const reportByRoom = {};
+    Object.keys(FLOORS).forEach(floor => {
+      FLOORS[floor].forEach(room => {
+        const roomFindings = findings.filter(f => f.room === room);
+        if (roomFindings.length > 0) {
+          reportByRoom[`${floor} - ${room}`] = roomFindings;
+        }
+      });
+    });
+
+    return (
+      <div className="min-h-screen bg-gray-50 p-4">
+        <div className="max-w-4xl mx-auto">
+          <button
+            onClick={() => setView('floors')}
+            className="text-indigo-600 hover:text-indigo-700 font-medium mb-4"
+          >
+            ← Back to Inspection
+          </button>
+
+          <div className="bg-white rounded-lg shadow-md p-6 mb-4">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-2xl font-bold text-gray-800">Master Report</h2>
+              <span className="bg-indigo-100 text-indigo-700 px-4 py-2 rounded-full font-semibold">
+                {findings.length} Total Issues
+              </span>
+            </div>
+            
+            <div className="flex gap-3 flex-wrap">
+              <div className="relative">
+                <button
+                  onClick={() => setShowExportMenu(!showExportMenu)}
+                  className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition flex items-center gap-2"
+                >
+                  <Download className="w-4 h-4" />
+                  Export Report
+                </button>
+                {showExportMenu && (
+                  <div className="absolute top-full left-0 mt-1 bg-white border-2 border-gray-200 rounded-lg shadow-lg z-10 min-w-48">
+                    <button
+                      onClick={() => { exportAsTxt(); setShowExportMenu(false); }}
+                      className="w-full text-left px-4 py-2 hover:bg-gray-100 rounded-t-lg"
+                    >
+                      Export as TXT
+                    </button>
+                    <button
+                      onClick={() => { exportAsPdf(); setShowExportMenu(false); }}
+                      className="w-full text-left px-4 py-2 hover:bg-gray-100"
+                    >
+                      Export as PDF
+                    </button>
+                    <button
+                      onClick={() => { exportAsDocx(); setShowExportMenu(false); }}
+                      className="w-full text-left px-4 py-2 hover:bg-gray-100 rounded-b-lg"
+                    >
+                      Export as Word Doc
+                    </button>
+                  </div>
+                )}
+              </div>
+              {groupedIssues.size >= 2 && (
+                <button
+                  onClick={mergeGrouped}
+                  className="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700 transition"
+                >
+                  Merge {groupedIssues.size} Selected
+                </button>
+              )}
+              {groupedIssues.size > 0 && (
+                <button
+                  onClick={() => setGroupedIssues(new Set())}
+                  className="bg-gray-500 text-white px-4 py-2 rounded-lg font-medium hover:bg-gray-600 transition"
+                >
+                  Clear Selection
+                </button>
+              )}
+              <button
+                onClick={clearAllData}
+                className="bg-red-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-red-700 transition"
+              >
+                Clear All Data
+              </button>
+            </div>
+          </div>
+
+          {groupedIssues.size >= 2 && (
+            <div className="bg-green-50 border-l-4 border-green-600 p-4 mb-4 rounded">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-green-700" />
+                <p className="text-green-700 font-medium">
+                  {groupedIssues.size} issues selected. Click "Merge" to combine them into one entry.
+                </p>
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-6">
+            {Object.keys(reportByRoom).length === 0 ? (
+              <div className="bg-white rounded-lg shadow-md p-8 text-center">
+                <p className="text-gray-600">No issues reported yet. Start your inspection!</p>
+              </div>
+            ) : (
+              Object.keys(reportByRoom).map(location => (
+                <div key={location} className="bg-white rounded-lg shadow-md p-6">
+                  <h3 className="text-xl font-bold text-gray-800 mb-4 border-b-2 border-indigo-600 pb-2">
+                    {location}
+                  </h3>
+                  <div className="space-y-3">
+                    {reportByRoom[location].map((finding, idx) => (
+                      <div 
+                        key={finding.id} 
+                        className={`p-4 rounded-lg border-2 transition ${
+                          groupedIssues.has(finding.id) 
+                            ? 'border-green-500 bg-green-50' 
+                            : 'border-gray-200 bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex justify-between items-start gap-3">
+                          <div className="flex items-start gap-3 flex-1">
+                            <input
+                              type="checkbox"
+                              checked={groupedIssues.has(finding.id)}
+                              onChange={() => toggleGroup(finding.id)}
+                              className="mt-1 w-5 h-5 text-indigo-600 cursor-pointer"
+                            />
+                            <div className="flex-1">
+                              <p className="text-gray-800 font-medium mb-1">{idx + 1}. {finding.issue}</p>
+                              <div className="flex gap-4 text-sm text-gray-600">
+                                <span>Reported by: {finding.addedBy}</span>
+                                <span>{new Date(finding.timestamp).toLocaleString()}</span>
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => deleteFinding(finding.id)}
+                            className="text-red-600 hover:text-red-700 p-2"
+                          >
+                            <Trash2 className="w-5 h-5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
