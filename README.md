@@ -1,2 +1,2 @@
 # house-inspection
-House walkthrough inspyapp
+House walkthrough inspection app
